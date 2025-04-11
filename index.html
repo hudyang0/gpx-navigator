@@ -1,1 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GPX Arrow Navigator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map {
+      height: 100%; margin: 0; padding: 0;
+    }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map').setView([0, 0], 17);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19
+  }).addTo(map);
+
+  // GPX string (embedded from your file)
+  const gpxString = `<?xml version="1.0" encoding="UTF-8"?>
+  <!-- Your full GPX content starts here -->
+  
+  <gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" version="1.1" creator="gpx.py -- https://github.com/tkrajina/gpxpy">
+  <trk>
+    <trkseg>
+      <trkpt lat="40.14933260319365" lon="-83.15215566325905">
+      </trkpt>
+      <trkpt lat="40.149910042806596" lon="-83.15114389744356">
+      </trkpt>
+      <trkpt lat="40.15108552970688" lon="-83.14585573478129">
+      </trkpt>
+      <trkpt lat="40.15167326552791" lon="-83.14255063311738">
+      </trkpt>
+      <trkpt lat="40.150198760772135" lon="-83.14180867151937">
+      </trkpt>
+      <trkpt lat="40.149487274999906" lon="-83.14110718055397">
+      </trkpt>
+      <trkpt lat="40.14863141992099" lon="-83.14072945464953">
+      </trkpt>
+      <trkpt lat="40.14787867099839" lon="-83.14148490645843">
+      </trkpt>
+      <trkpt lat="40.14695061289926" lon="-83.14256412332827">
+      </trkpt>
+      <trkpt lat="40.14594004632647" lon="-83.14326561429368">
+      </trkpt>
+      <trkpt lat="40.1454141332848" lon="-83.14443926263964">
+      </trkpt>
+      <trkpt lat="40.14581630244768" lon="-83.14632789216188">
+      </trkpt>
+      <trkpt lat="40.146352524294485" lon="-83.14867518885379">
+      </trkpt>
+      <trkpt lat="40.14721871987474" lon="-83.15044240647815">
+      </trkpt>
+      <trkpt lat="40.14762087835384" lon="-83.15207472199381">
+      </trkpt>
+      <trkpt lat="40.14933260319365" lon="-83.15215566325905">
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
+
+  <!-- Your full GPX content ends here -->`;
+
+  // Parse GPX to coordinates
+  function parseGPX(gpxText) {
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(gpxText, "application/xml");
+    const trkpts = xml.getElementsByTagName('trkpt');
+    const coords = [];
+    for (let i = 0; i < trkpts.length; i++) {
+      const lat = parseFloat(trkpts[i].getAttribute('lat'));
+      const lon = parseFloat(trkpts[i].getAttribute('lon'));
+      coords.push([lat, lon]);
+    }
+    return coords;
+  }
+
+  const gpxCoords = parseGPX(gpxString);
+
+  // Draw the next N arrows ahead of user
+  let arrowLayer = L.layerGroup().addTo(map);
+  const arrowCount = 5;
+
+  function drawArrows(currentIndex) {
+    arrowLayer.clearLayers();
+    for (let i = 0; i < arrowCount; i++) {
+      const idx = currentIndex + i;
+      if (idx + 1 < gpxCoords.length) {
+        const line = L.polyline([gpxCoords[idx], gpxCoords[idx + 1]], {
+          color: 'red', weight: 4, opacity: 0.8
+        });
+        arrowLayer.addLayer(line);
+      }
+    }
+  }
+
+  function findClosestIndex(lat, lon) {
+    let closestIndex = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < gpxCoords.length; i++) {
+      const [ptLat, ptLon] = gpxCoords[i];
+      const dist = Math.hypot(lat - ptLat, lon - ptLon);
+      if (dist < minDist) {
+        minDist = dist;
+        closestIndex = i;
+      }
+    }
+    return closestIndex;
+  }
+
+  function onLocationFound(e) {
+    const { lat, lng } = e.latlng;
+    L.circleMarker([lat, lng], { radius: 4, color: 'blue' }).addTo(map);
+    map.setView([lat, lng]);
+    const idx = findClosestIndex(lat, lng);
+    drawArrows(idx);
+  }
+
+  function onLocationError(e) {
+    alert("GPS error: " + e.message);
+  }
+
+  map.locate({ watch: true, enableHighAccuracy: true });
+  map.on('locationfound', onLocationFound);
+  map.on('locationerror', onLocationError);
+</script>
+</body>
+</html>
 
