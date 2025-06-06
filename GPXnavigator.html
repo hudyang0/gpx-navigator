@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Full file input</title>
+    <meta charset="utf-8"/>
+    <meta viewport content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="description" content="full file input of gpx files"/>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""/>
+    <link rel="stylesheet" href="GPXtracker.css"/>
+
+</head>
+<body>
+    <!--Initial buttons-->
+    <div id="buttonDiv" class="container" style="position: absolute; top:50%; left:50%; transform: translate(-50%, -50%); z-index: 1000;">
+        <input type="file" id="fileInput" style="display: none"/>
+        <button class="button-1" role="button" id="fileInputButton">Upload GPX file</button>
+
+        
+        <a id="fileName" style="visibility: hidden"></a>
+        <button class="button-1" role="button" style="visibility: hidden" id="letsGo">Let's go!</button>
+
+        
+        <label class = "checkbox-label" style="visibility: hidden" id="detailCheckboxLabel">
+            <input type="checkbox" id="detailCheckbox" value="detail" style="visibility: hidden; cursor: pointer"/>
+            Enable high detail navigation <br>
+            &#40;Do not enable for GPX files from Strava &#41;
+        </label>
+
+    </div>
+
+    <!--Program buttons-->
+    <button class="button-1" id="recenterButton" style="display: none; position: absolute; top:20%; left:50%; transform: translate(-50%, -50%); z-index: 1000;">Re-center</button>
+    <button class="button-1" id="nextButton" style="display: none; position: absolute; top:80%; left:80%; transform: translate(-50%, -50%); z-index: 1000;">Next</button>
+    <button class="button-1" id="previousButton" style="display: none; position: absolute; top:80%; left:20%; transform: translate(-50%, -50%); z-index: 1000;">Previous</button>
+
+    <!--Map-->
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+    <!--Some math functions-->
+    <script src="math_functions.js"></script>
+
+    <!--Main script-->
+    <script>
+        /*INITIALIZATION*/
+
+        //Initialize map
+        const map = L.map('map').setView([39.807414, -98.545789], 4.5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 23,
+            attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        }).addTo(map);
+        
+        //Lock the map in place
+        map.dragging.disable();
+        map.scrollWheelZoom.disable();
+        map.doubleClickZoom.disable();
+
+        //Initialize global variables
+        var GPXcoords = [];
+
+        //*CONTINUOUS PROGRAM*//
+
+        /*DRAW GPX PATH*/
+        function convertGToCoords(GPXstring){
+            /*
+            Convert gpx file to a array of coordinates
+            Args:
+                GPXstring: GPX file as a string
+            Returns:
+                Array of 2-tuple coordinates
+            */
+            //Get the lat lon attributes of each trackpoint element in the GPX file
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(GPXstring, "application/xml");
+            const trkpts = xml.getElementsByTagName("trkpt");
+            const coords = [];
+            for(var i = 0; i < trkpts.length; i++){
+                const lat = parseFloat(trkpts[i].getAttribute("lat"));
+                const lon = parseFloat(trkpts[i].getAttribute("lon"));
+                coords.push([lat, lon]);
+            }
+            return coords;
+        }
+
+        function drawGPX(arg_GPXcoords){
+            /*Creates a polyline from the GPX data
+            Args:
+                Array of 2-tuple coordinates
+            Returns:
+                Polyline with the coordinates of the GPX file
+            */
+            //Create polyline object from GPX coordaintes
+            return L.polyline(arg_GPXcoords, {color: "blue", opacity: 0.5}); 
+        }
+
+
+        /*DRAW ARROWS*/
+
+        function arrowObject(p1, p2, distL, headL, bufferL){
+            /*
+            Creates featuregroup object of arrow from one coordinate to another
+            Args:
+                p1: tuple of the first point
+                p2: tuple of the second point
+                distL: the length of the arrow from the line
+                headL: the length of the arrowhead
+                bufferL: distance from start of path segment from the start of the arrow to prevent overlap of arrows
+            Returns:
+                Featuregroup Object
+            */
+
+            //Calculate start and end points of the arrow body
+            const xdif = p2[0] - p1[0];
+            const ydif = p2[1] - p1[1];
+
+            //normalize the direction of the path
+            const unitPath = vectorNormalize([xdif, ydif]);
+
+            //rotate the vector 90 degress to the right to get normal in desired direction
+            const normal = [-1*unitPath[1], unitPath[0]];
+
+            //add the normal vectors to the start and end points of the path
+            const a1 = vectorAdd(p1, vectorScale(normal, distL));
+            const a2 = vectorAdd(p2, vectorScale(normal, distL));
+            
+            //buffer the start and end points of the arrows so they don't overlap
+            const a1buffered = vectorAdd(a1, vectorScale(unitPath, bufferL));
+            const a2buffered = vectorAdd(a2, vectorScale(unitPath, -1 * bufferL));   
+           
+            arrowBody = L.polyline([a1buffered, a2buffered], {color: "red"});
+
+            //create the arrow heads using rotation transformations
+            const arrowHeadLeftX = headL * 0.7071 * ((-1 * unitPath[0]) + (-1 * unitPath[1]));
+            const arrowHeadLeftY = headL * 0.7071 * (unitPath[0] + (-1 * unitPath[1]));
+            var arrowHeadLeft = L.polyline([a2buffered, vectorAdd(a2buffered, [arrowHeadLeftX, arrowHeadLeftY])], {color: "red"});
+
+            const arrowHeadRightX = headL * 0.7071 * ((-1 * unitPath[0]) + unitPath[1]);
+            const arrowHeadRightY = headL * 0.7071 * ((-1 * unitPath[0]) + (-1 * unitPath[1]));
+            var arrowHeadRight = L.polyline([a2buffered, vectorAdd(a2buffered, [arrowHeadRightX, arrowHeadRightY])], {color: "red"});
+
+            //return a grouping of the parts
+            var completeArrow = L.featureGroup([arrowBody, arrowHeadLeft, arrowHeadRight], {color: "red"});
+            return completeArrow;
+        }
+
+        function updateArrowRegister(direction){
+            /*Updates the arrow register by adding the next arrow or adding the previous
+            Args:
+                direction: either "next" or "previous"
+            Returns: 
+            */
+           
+            if(direction == "next"){
+                //Make sure the user can't go past the end
+                if (global_index >= GPXcoords.length) return;
+
+                for (var k = 0; k < arrowRegister.length; k++) {
+                    //remove all groups from map
+                    if (arrowRegister[k]) {
+                        arrowRegister[k].removeFrom(map);
+                    }
+
+                    //move backward 
+                    if (k != 0) {
+                        arrowRegister[k - 1] = arrowRegister[k];
+
+                        //If that item is an arrow add it back to the map
+                        if (arrowRegister[k - 1]) {
+                            //also if the arrow is now behind, make it orange
+                            if ((k - 1) < arrowCountAhead) {
+                                arrowRegister[k - 1].setStyle({ color: "orange", opacity: "0.5" });
+                            }
+                            //add back to the map
+                            arrowRegister[k - 1].addTo(map);
+                        }
+                    }
+                }
+
+                //create new arrow at last item in the array (already checked if path is at end)
+                arrowRegister[(2 * arrowCountAhead) - 1] = arrowObject(GPXcoords[global_index], GPXcoords[global_index + 1], 0.00001, 0.00002, 0.00002).addTo(map);
+                global_index++;
+                
+                /*Remove later*/
+                
+            }else if(direction == "previous"){
+                //make sure user can't go before the beginning
+                if (global_index - (2*arrowCountAhead) - 1 < 0){
+                    console.log("can't go back any farther")
+                }
+
+                for(var m = arrowRegister.length - 1; m >= 0; m--){
+                    //remove all groups from map
+                    if(arrowRegister[m]){
+                        arrowRegister[m].removeFrom(map);
+                    }
+
+                    //move forward
+                    if(m != arrowRegister.length-1){
+                        arrowRegister[m + 1] = arrowRegister[m];
+
+                        if(arrowRegister[m + 1]){
+                            //also if there arrow is ahead, make it red
+                            if((m+1) >= arrowCountAhead){
+                                arrowRegister[m+1].setStyle({color: "red", opacity: "1.0"});
+                            }
+                            //add back to the map
+                            arrowRegister[m+1].addTo(map);
+                        }
+                    }
+                }
+
+                //create previous arrow at first item in array (already checked that path is not at beginning)
+                arrowRegister[0] = arrowObject(GPXcoords[global_index - (2*arrowCountAhead) - 1], GPXcoords[global_index - (2*arrowCountAhead)], 0.00001, 0.00002, 0.00002)
+                    .setStyle({color: "orange", opacity: "0.5"})    
+                    .addTo(map);
+                global_index--;
+            }
+            console.log(global_index);
+            //readjust map view
+            supressRecenter = true;
+            var pathPositionView = GPXcoords.slice(Math.max(0, global_index - (2 * arrowCountAhead)), global_index).concat([[lat, lon]]);
+            map.fitBounds(pathPositionView);
+            setTimeout(() => {
+                supressRecenter = false;
+            }, 500);
+        }
+
+        function nextTarget(){
+            //update the arrow register
+            console.log("next");
+            updateArrowRegister("next");
+
+            //change the target position
+            targetlat = GPXcoords[global_index-arrowCountAhead][0];
+            targetlon = GPXcoords[global_index - arrowCountAhead][1];
+            targetCircle.setLatLng([targetlat, targetlon]);
+        }
+
+        function previousTarget(){
+            //update the arrow register
+            console.log("previous");
+            updateArrowRegister("previous");
+
+            //change the target position
+            targetlat = GPXcoords[global_index - arrowCountAhead][0];
+            targetlon = GPXcoords[global_index - arrowCountAhead][1];
+            targetCircle.setLatLng([targetlat, targetlon]);
+        }
+
+        //Target variables
+        var targetCircle = L.circle([0,0], 1).addTo(map);
+        var targetlat = 0;
+        var targetlon = 0;
+
+        //Arrow variables
+        const arrowCountAhead = 5;
+        var arrowRegister = [];
+        var global_index = 0;
+
+        function initArrows(){
+            /*
+            Fills the arrow registry of (ACA) 0's and the (ACA) arrows
+            */
+
+            //since we are beginning from the start, there are no previous arrows
+            for (var i = 0; i < arrowCountAhead; i++) {
+                arrowRegister.push(0); //uses 0 for "no arrow"
+            }
+
+            //add the preceding arrows
+            for (var j = 0; j < arrowCountAhead; j++) {
+                if (GPXcoords[j + 1]) {
+                    arrowRegister.push(arrowObject(GPXcoords[j], GPXcoords[j + 1], 0.00001, 0.00002, 0.00002).addTo(map));
+                } else {
+                    break;
+                }
+            }
+
+            //global_index is at the end of the farthest arrow
+            global_index = arrowCountAhead;
+
+            //sets the target to the first point of the GPX
+            targetlat = GPXcoords[0][0];
+            targetlon = GPXcoords[0][1];
+            targetCircle.setLatLng([targetlat, targetlon]);
+        }
+
+        /*LOCATION ACCESS*/
+        var myMarker = L.marker([0,0]).addTo(map);
+        var redrawView = 1;
+        var lat = 0;
+        var lon = 0;
+        var accuracy = 0;
+        const viewZoom = 19;
+
+        function getPosition(position){
+            /*
+            The function called when geolocation finds position
+            */
+            //Get data
+            lat = position.coords.latitude;
+            lon = position.coords.longitude;
+            accuracy = position.coords.accuracy;
+            console.log(lat, lon, accuracy);
+
+            //marks user location
+            myMarker.setLatLng([lat, lon]);
+
+            //Different views if detail is enabled
+            if(detail){
+                //View includes arrows if detail is enabled
+                if(redrawView){
+                    //prevent the re-center from activating
+                    supressRecenter = true;
+                    var pathPositionView = GPXcoords.slice(Math.max(0, global_index - (2 * arrowCountAhead)), global_index).concat([[lat, lon]]);
+                    map.fitBounds(pathPositionView);
+                    setTimeout(() => {
+                        supressRecenter = false;
+                    }, 500);
+                }
+                
+                var distance = getDistanceFromLatLonInMeters(lat, lon, targetlat, targetlon);
+
+                if(distance < 5){
+                    nextTarget();
+                }
+            }else{
+                if(redrawView){
+                    supressRecenter = true;
+                    map.setView([lat, lon], viewZoom);
+                    setTimeout(() => {
+                        supressRecenter = false;
+                    }, 500);
+                } 
+            }
+        }
+
+        function getPositionError(error){
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    alert("User denied the request for Geolocation.");
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    alert("Location information is unavailable.");
+                    break;
+                case error.TIMEOUT:
+                    alert("The request to get user location timed out.");
+                    break;
+                case error.UNKNOWN_ERROR:
+                    alert("An unknown error occurred.");
+                    break;
+            }
+        }
+
+
+        //*BUTTON FUNCTIONALITY*//
+        /*Beginning buttons*/
+
+        const fileInput = document.getElementById("fileInput");
+        const fileInputButton = document.getElementById("fileInputButton");
+        const fileName = document.getElementById("fileName");
+        const letsGoButton = document.getElementById("letsGo");
+        const detailCheckbox = document.getElementById("detailCheckbox");
+        const detailCheckboxLabel = document.getElementById("detailCheckboxLabel");
+
+        //"Upload GPX File" stands in for file input
+        fileInputButton.addEventListener("click", () => {
+            fileInput.click();
+        })
+
+        //When the file has been uploaded, show the other buttons and read the GPX file
+        var GPXfile = "";
+        fileInput.addEventListener("change", () =>{
+            file = fileInput.files[0];
+            if(file){
+                if(file.name.endsWith(".gpx")){
+                    console.log("GPX successfuly uploaded: " + file.name);
+                    fileInputButton.innerHTML = "Choose another";
+                    fileName.innerHTML = "file chosen: " + file.name;
+                    fileName.style.visibility = "visible";
+
+                    const reader = new FileReader();
+                    reader.onload = function(event){
+                        GPXfile = event.target.result;
+                        console.log(GPXfile);
+
+                        //show checkbox and lets go button
+                        letsGoButton.style.visibility = "visible";
+                        detailCheckbox.style.visibility = "visible";
+                        detailCheckboxLabel.style.visibility = "visible";
+                    }
+                    reader.readAsText(file);
+                }else{
+                    alert("The file you uploaded was not GPX");
+                    console.log("The file you uploaded was not GPX");
+                    fileInput.value = "";
+                }
+            }
+        })
+
+        //The button which removes the other buttons and starts the continuous program
+        var GPXcoords = [];
+        var detail = false;
+        let supressRecenter = true;
+
+        const nextButton = document.getElementById("nextButton");
+        const previousButton = document.getElementById("previousButton");
+
+        letsGoButton.addEventListener("click", () => {
+            detail = document.getElementById("detailCheckbox").checked;
+
+            //hide all the buttons
+            fileInputButton.style.display = "none";
+            fileName.style.display = "none";
+            letsGoButton.style.display = "none";
+            detailCheckbox.style.display = "none";
+            detailCheckboxLabel.style.display = "none";
+
+            //unlock map
+            map.dragging.enable();
+            map.scrollWheelZoom.enable();
+            map.doubleClickZoom.enable();  
+
+            //draw path
+            GPXcoords = convertGToCoords(GPXfile);
+            var GPXpolyline = drawGPX(GPXcoords).addTo(map);
+            map.fitBounds(GPXpolyline.getBounds());
+            console.log(JSON.stringify(GPXcoords));
+
+            //prevent movestart listener from executing while map.fitBounds() is happening
+            setTimeout(() => {
+                supressRecenter = false;
+            }, 500);
+            
+            //Initialize arrows if necessary
+            if(detail){
+                console.log("high detail selected");
+                initArrows(GPXcoords);
+            }else{
+                console.log("high detail NOT selected");
+            }
+
+            //initiate gps
+            if(!navigator.geolocation){
+                alert("Your browser doesn't support geolocation");
+            }else{
+                navigator.geolocation.watchPosition(getPosition, getPositionError, {enableHighAccuracy: true, maximumAge: 0, timeout: 10000}); 
+            }
+            console.log("GPS began");
+
+            //Show next and previous buttons
+            if(detail) {
+                nextButton.style.display = "inline-block";
+                previousButton.style.display = "inline-block";
+                console.log("shown")
+            }
+            
+        })
+
+        /*BUTTONS FOR CONTINUOUS PROGRAM*/
+        //Re-center button when user interacts with the map
+        const recenterButton = document.getElementById("recenterButton");
+        
+        map.on("movestart", () =>{
+            if(supressRecenter) return;
+            recenterButton.style.display = "inline-block";
+            redrawView = 0;
+        });
+        
+        recenterButton.addEventListener("click", () => {
+            //hide button
+            recenterButton.style.display = "none";
+
+            //stop movestart event listener from activating and reset view
+            supressRecenter = true;
+
+            if(detail){
+                var pathPositionView = GPXcoords.slice(Math.max(0, global_index - (2 * arrowCountAhead)), global_index).concat([[lat, lon]]);
+                map.fitBounds(pathPositionView);
+            }else{
+                map.setView([lat, lon], viewZoom);
+                redrawView = 1;
+            }
+
+            //allow the movestart event listener to execute after 500 ms
+            setTimeout(() => {
+                supressRecenter = false;
+            }, 500);
+        });
+
+        //Next button
+        nextButton.addEventListener("click", nextTarget);
+
+        //Previous button
+        previousButton.addEventListener("click", previousTarget);
+
+    </script>
+
+</body>
+</html>
